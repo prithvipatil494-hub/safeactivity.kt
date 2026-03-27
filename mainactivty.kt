@@ -134,7 +134,6 @@ fun httpGet(path: String): JSONObject? = try {
     if (conn.responseCode == 200) JSONObject(conn.inputStream.bufferedReader().readText()) else null
 } catch (_: Exception) { null }
 
-// NEW: GET that returns a JSONArray
 private fun httpGetArray(path: String): JSONArray? = try {
     val conn = URL("$BACKEND$path").openConnection() as HttpURLConnection
     conn.connectTimeout = 5000; conn.readTimeout = 5000; conn.requestMethod = "GET"
@@ -437,7 +436,6 @@ fun MainApp(
 
     var showFriendDialog by remember { mutableStateOf(false) }
 
-    // Chat: null = list, non-null = open chat with that friend's trackId
     var showChat            by remember { mutableStateOf(false) }
     var chatWithTrackId     by remember { mutableStateOf<String?>(null) }
     var chatWithName        by remember { mutableStateOf<String?>(null) }
@@ -637,7 +635,6 @@ fun MainApp(
 
     val trackedSnapshot = trackedIds.toList()
     LaunchedEffect(trackedSnapshot, showFriendDialog) {
-        // Pause live friend polling while adding a new friend to avoid UI race/glitches.
         if (trackedSnapshot.isEmpty() || showFriendDialog) return@LaunchedEffect
         while (true) {
             coroutineScope {
@@ -655,9 +652,6 @@ fun MainApp(
         }
     }
 
-    // Keep saved friend profiles in sync for tracked IDs added via Track ID flow.
-    // This ensures name/email appear even when the friend was tracked before
-    // being explicitly "saved" from search.
     LaunchedEffect(trackedSnapshot, user.uid) {
         val idsNeedingProfile = trackedSnapshot.filter { id ->
             val existing = savedFriends.find { it.trackId == id }
@@ -761,13 +755,11 @@ fun MainApp(
 
     if (!hasPerm) { PermScreen { permLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) }; return }
 
-    // ── Chat: either open to a specific friend, or the general chat list ──────
     if (showChat) {
         ChatEntryPoint(
             myTrackId   = myTrackId,
             myName      = user.displayName ?: myTrackId,
             trackedIds  = trackedIds.toList(),
-            // Pass the pre-selected friend if user tapped a friend card
             initialChatTrackId = chatWithTrackId,
             initialChatName    = chatWithName,
             onBack = {
@@ -779,7 +771,6 @@ fun MainApp(
         return
     }
 
-    // ── My Friends screen ─────────────────────────────────────────────────────
     if (showMyFriends && viewingProfile == null) {
         MyFriendsScreen(
             savedFriends    = savedFriends,
@@ -799,7 +790,6 @@ fun MainApp(
         return
     }
 
-    // ── User profile screen ───────────────────────────────────────────────────
     if (viewingProfile != null) {
         val vp = viewingProfile!!
         UserProfileScreen(
@@ -926,14 +916,12 @@ fun MapScreen(
         if (!myCentred.value) { viewport.flyTo(CameraOptions.Builder().center(d.point).zoom(16.0).build()); myCentred.value = true }
     }
 
-    // Auto-focus map when a new friend starts being tracked.
     LaunchedEffect(trackedIds) {
         val added = trackedIds.filter { it !in previousTrackedIds }
         if (added.isNotEmpty()) pendingFriendFocusId = added.last()
         previousTrackedIds = trackedIds
     }
 
-    // Wait until that friend has a live location, then center and zoom in.
     LaunchedEffect(pendingFriendFocusId, friendLocations) {
         val id = pendingFriendFocusId ?: return@LaunchedEffect
         val loc = friendLocations[id] ?: return@LaunchedEffect
@@ -1032,7 +1020,7 @@ fun BottomCardV2(
 ) {
     val ctx = LocalContext.current
     val liveCount = trackedIds.count { id -> friendLocations[id]?.isRecent == true }
-    var activeSection by remember { mutableIntStateOf(0) } // 0 Dashboard, 1 Friends, 2 Tracking
+    var activeSection by remember { mutableIntStateOf(0) }
 
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1128,7 +1116,13 @@ fun BottomCardV2(
             }
 
             1 -> Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-                Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = Color.White, border = androidx.compose.foundation.BorderStroke(1.dp, SheetBorder), onClick = onOpenMyFriends) {
+                // ── FIX: removed onClick from Surface, use Modifier.clickable instead ──
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable { onOpenMyFriends() },
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color.White,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SheetBorder)
+                ) {
                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Contacts ${savedFriends.size}  •  Live $liveCount", modifier = Modifier.weight(1f), fontSize = 13.sp, color = TextPrimary)
                         Text("Open", color = SkyPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -1208,7 +1202,6 @@ fun BottomCard(
     val liveCount = trackedIds.count { id -> friendLocations[id]?.isRecent == true }
 
     Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 48.dp)) {
-        // ── Header ────────────────────────────────────────────────────────────
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(44.dp).clip(CircleShape).background(Brush.linearGradient(listOf(SkyPrimary, SkyDeep))), Alignment.Center) {
                 Text((user.displayName?.firstOrNull() ?: "U").toString().uppercase(), color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
@@ -1233,7 +1226,6 @@ fun BottomCard(
 
         Spacer(Modifier.height(18.dp))
 
-        // ── Track ID ──────────────────────────────────────────────────────────
         Button(
             onClick  = { showFriendDialog_stub(onShowFriendDialog, trackedIds.size) },
             enabled  = trackedIds.size < MAX_FRIENDS,
@@ -1279,14 +1271,13 @@ fun BottomCard(
 
         Spacer(Modifier.height(16.dp))
 
-        // ── My Friends button ──────────────────────────────────────────────────
+        // ── FIX: removed onClick from Surface, use Modifier.clickable instead ──
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().clickable { onOpenMyFriends() },
             shape    = RoundedCornerShape(20.dp),
             color    = Color.White,
             shadowElevation = 3.dp,
-            border   = androidx.compose.foundation.BorderStroke(1.dp, SkyPrimary.copy(alpha = 0.25f)),
-            onClick  = onOpenMyFriends
+            border   = androidx.compose.foundation.BorderStroke(1.dp, SkyPrimary.copy(alpha = 0.25f))
         ) {
             Row(
                 Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
@@ -1328,7 +1319,6 @@ fun BottomCard(
 
         Spacer(Modifier.height(20.dp))
 
-        // ── Saved Friends Section ─────────────────────────────────────────────
         if (savedFriends.isNotEmpty()) {
             SavedFriendsSection(
                 savedFriends        = savedFriends,
@@ -1341,7 +1331,6 @@ fun BottomCard(
             Spacer(Modifier.height(20.dp))
         }
 
-        // ── Background Tracking ───────────────────────────────────────────────
         SectionLabel("BACKGROUND TRACKING")
         Spacer(Modifier.height(10.dp))
         Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Color.White, shadowElevation = 3.dp,
@@ -1359,7 +1348,6 @@ fun BottomCard(
 
         Spacer(Modifier.height(20.dp))
 
-        // ── My Location ───────────────────────────────────────────────────────
         SectionLabel("MY LOCATION")
         Spacer(Modifier.height(10.dp))
         Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Color.White, shadowElevation = 3.dp, border = androidx.compose.foundation.BorderStroke(1.dp, SheetBorder)) {
@@ -1391,7 +1379,6 @@ fun BottomCard(
 
         Spacer(Modifier.height(20.dp))
 
-        // ── Live Tracking ─────────────────────────────────────────────────────
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             SectionLabel("FRIENDS TRACKING")
             Spacer(Modifier.weight(1f))
@@ -1418,7 +1405,6 @@ fun BottomCard(
 
         Spacer(Modifier.height(20.dp))
 
-        // ── Path Recording ────────────────────────────────────────────────────
         SectionLabel("PATH RECORDING")
         Spacer(Modifier.height(10.dp))
         if (isRecording) {
@@ -1628,16 +1614,18 @@ fun FriendProfileCard(
     val hasProfile   = sf.displayName.isNotBlank()
     val isLive       = liveLocation?.isRecent == true
 
+    // ── FIX: removed onClick from Surface, use Modifier.clickable instead ──
     Surface(
-        modifier        = Modifier.fillMaxWidth(),
+        modifier        = Modifier.fillMaxWidth().then(
+            if (hasProfile) Modifier.clickable { onViewProfile() } else Modifier
+        ),
         shape           = RoundedCornerShape(20.dp),
         color           = Color.White,
         shadowElevation = 3.dp,
         border          = androidx.compose.foundation.BorderStroke(
             1.5.dp,
             when { isLive -> SkyPrimary.copy(alpha = 0.35f); isTracking -> Color(0xFFF59E0B).copy(alpha = 0.35f); else -> SheetBorder }
-        ),
-        onClick = if (hasProfile) onViewProfile else {{}}
+        )
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1704,7 +1692,6 @@ fun FriendProfileCard(
                 }
             }
 
-            // ── Chat button row (always shown for saved friends) ──────────────
             if (hasProfile) {
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(SheetBorder))
@@ -1780,7 +1767,6 @@ fun UserProfileScreen(
                 }
             }
 
-            // ── Action buttons ────────────────────────────────────────────────
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp).offset(y = (-22).dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(
                     onClick  = { onToggleTrack(profile.trackId) },
@@ -1803,7 +1789,6 @@ fun UserProfileScreen(
                 }
             }
 
-            // ── NEW: Message button ───────────────────────────────────────────
             Button(
                 onClick  = { onOpenChat(profile) },
                 shape    = RoundedCornerShape(14.dp),
@@ -1815,7 +1800,6 @@ fun UserProfileScreen(
                 Text("Message ${profile.displayName.split(" ").first().ifBlank { "Friend" }}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = Color.White)
             }
 
-            // ── Info card ─────────────────────────────────────────────────────
             Surface(
                 Modifier.fillMaxWidth().padding(horizontal = 20.dp).offset(y = (-10).dp),
                 shape = RoundedCornerShape(24.dp), color = Color.White, shadowElevation = 4.dp
@@ -1917,13 +1901,13 @@ fun SavedFriendsSection(
         val slotsLeft  = MAX_FRIENDS - trackedIds.size
         val canTrack   = !isTracking && slotsLeft <= 0
 
+        // ── FIX: removed onClick from Surface, use Modifier.clickable instead ──
         Surface(
-            modifier        = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            modifier        = Modifier.fillMaxWidth().padding(bottom = 10.dp).clickable { onViewProfile(sf) },
             shape           = RoundedCornerShape(20.dp),
             color           = Color.White,
             shadowElevation = 3.dp,
-            border          = androidx.compose.foundation.BorderStroke(1.5.dp, if (isTracking) SkyPrimary.copy(alpha = 0.40f) else SheetBorder),
-            onClick         = { onViewProfile(sf) }
+            border          = androidx.compose.foundation.BorderStroke(1.5.dp, if (isTracking) SkyPrimary.copy(alpha = 0.40f) else SheetBorder)
         ) {
             Column(Modifier.padding(14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1967,7 +1951,6 @@ fun SavedFriendsSection(
                     }
                 }
 
-                // ── Chat shortcut ─────────────────────────────────────────────
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp).background(SheetBorder))
                 Spacer(Modifier.height(10.dp))
@@ -2051,7 +2034,7 @@ fun MiniStat(label: String, value: String, modifier: Modifier = Modifier) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ─── Friend Dialog — now with Name/Email search tab ───────────────────────────
+// ─── Friend Dialog ────────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun FriendDialog(
@@ -2063,10 +2046,9 @@ fun FriendDialog(
     onAddAndTrack: (SavedFriend) -> Unit,
     onViewProfile: (SavedFriend) -> Unit
 ) {
-    // Add flow is intentionally ID-only to avoid racey UI while tracking.
     var idInput      by remember { mutableStateOf("") }
     var lookupResult by remember { mutableStateOf<SavedFriend?>(null) }
-    var lookupState  by remember { mutableStateOf("idle") } // idle | loading | found | notfound
+    var lookupState  by remember { mutableStateOf("idle") }
     var lookupRequestId by remember { mutableIntStateOf(0) }
 
     val scope  = rememberCoroutineScope()
@@ -2091,7 +2073,6 @@ fun FriendDialog(
         scope.launch(Dispatchers.IO) {
             val result = httpGet("/api/user/by-trackid/$requestedId")
             withContext(Dispatchers.Main) {
-                // Ignore stale responses if a newer lookup started or input changed.
                 if (requestId != lookupRequestId) return@withContext
                 if (idInput.trim().uppercase() != requestedId) return@withContext
                 if (result != null && result.has("trackId")) {
@@ -2112,7 +2093,6 @@ fun FriendDialog(
         Surface(shape = RoundedCornerShape(24.dp), color = SheetCard, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp)) {
 
-                // Header
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(40.dp).clip(CircleShape).background(SkyPrimary.copy(alpha = 0.12f)), Alignment.Center) { Text("👥", fontSize = 18.sp) }
                     Spacer(Modifier.width(12.dp))
@@ -2128,7 +2108,7 @@ fun FriendDialog(
                         value         = idInput,
                         onValueChange = {
                             idInput = it.uppercase()
-                            lookupRequestId += 1 // invalidate any in-flight lookup
+                            lookupRequestId += 1
                             lookupState = "idle"
                             lookupResult = null
                         },
@@ -2160,7 +2140,7 @@ fun FriendDialog(
                     if (alreadyTracked) {
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "You’re already tracking this ID.",
+                            "You're already tracking this ID.",
                             fontSize = 11.sp,
                             color = RedRecord,
                             fontWeight = FontWeight.SemiBold
@@ -2197,7 +2177,7 @@ fun FriendDialog(
     }
 }
 
-// ─── Shared search result card used in both tabs ──────────────────────────────
+// ─── Search Result Card ───────────────────────────────────────────────────────
 @Composable
 fun SearchResultCard(
     sf:             SavedFriend,
